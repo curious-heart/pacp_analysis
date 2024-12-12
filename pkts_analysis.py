@@ -3,13 +3,28 @@ import datetime
 from datetime import timedelta
 import sys
 import os
+import argparse
 
-usage_str = "usage: " + os.path.basename(__file__) + " pacp-file-name [out-put-file-name]"
-if len(sys.argv) != 2 and len(sys.argv) != 3:
-    print(usage_str)
-    sys.exit(0)
-g_pacp_file_name = sys.argv[1]
-g_output_file_name = "data_groups.txt" if len(sys.argv) !=3 else sys.argv[2]
+g_pacp_file_opt_key = 'pacp_file'
+g_output_file_opt_key = 'output_file'
+g_pkt_info_file_opt_key = 'pkt_info_file'
+
+g_def_output_file_name = "data_groups.txt" 
+g_def_pkt_info_file_name = "pkt_info_file.txt"
+
+parser = argparse.ArgumentParser()
+parser.add_argument(g_pacp_file_opt_key, default = "", help = "pacp file name")
+parser.add_argument('-o', '--' + g_output_file_opt_key, default = g_def_output_file_name, help = "output file name")
+parser.add_argument('-p', '--' + g_pkt_info_file_opt_key, default = "", help = "file name to rec pkt info")
+cmd_args = vars(parser.parse_args())
+g_pacp_file_name = cmd_args[g_pacp_file_opt_key]
+g_output_file_name = cmd_args[g_output_file_opt_key]
+g_pkt_info_file_name = cmd_args[g_pkt_info_file_opt_key]
+
+print('{} is :{}'.format(g_pacp_file_opt_key, g_pacp_file_name))
+print('{} is :{}'.format(g_output_file_opt_key, g_output_file_name))
+print('{} is :{}'.format(g_pkt_info_file_opt_key , g_pkt_info_file_name))
+
 g_pacp_display_filter='(ip.src == 24.26.7.51) && (udp) && (ip.len>=100)'
 
 #data begins with "bcbc". e.g.
@@ -38,23 +53,23 @@ print("")
 
 g_cmd_bytes_str = "e1"
 def get_a_pkt(cap): 
-    ret = {'ret' : False}
+    pkt = {'ret' : False}
     while True:
         try:
             udp_pkt = cap.next()
             ds = str(udp_pkt.data.data)
             if(ds[g_pkt_ele_pos_dict['cmd'][0] :  g_pkt_ele_pos_dict['cmd'][0] + g_pkt_ele_pos_dict['cmd'][1]] 
                          == g_cmd_bytes_str):
-                ret['ret'] = True
-                ret['sniff_time'] = udp_pkt.sniff_time
-                ret['info'] = dict()
+                pkt['ret'] = True
+                pkt['sniff_time'] = udp_pkt.sniff_time
+                pkt['info'] = dict()
                 for k in g_pkt_ele_pos_dict.keys():
-                    ret['info'][k] \
+                    pkt['info'][k] \
                         = eval("0x" + ds[g_pkt_ele_pos_dict[k][0] : g_pkt_ele_pos_dict[k][0] + g_pkt_ele_pos_dict[k][1]]) 
-                return ret
+                return pkt 
         except StopIteration:
             break;
-    return ret
+    return pkt
 
 g_statistics_dict = \
 {
@@ -98,6 +113,16 @@ except IOError:
     print("Open output file " + g_output_file_name + " error.")
     sys.exit(-1)
 
+if g_pkt_info_file_name != "":
+    try:
+        g_pkt_info_file = open(g_pkt_info_file_name, "w")
+        print("sniff_time|", file = g_pkt_info_file, end = "")
+        for k in g_pkt_ele_pos_dict.keys(): print(k + "|", file = g_pkt_info_file, end = "")
+        print("", file = g_pkt_info_file)
+    except IOError:
+        print("Open pkt_info file " + g_pkt_info_file_name + " error.")
+        sys.exit(-2)
+
 g_captured_pkts = pyshark.FileCapture(g_pacp_file_name, display_filter=g_pacp_display_filter, keep_packets = False)
 
 g_ts_repeat_times_delta = timedelta(0, 52) #52 seconds
@@ -116,12 +141,11 @@ while True:
         print("\nNo more pkts.\n")
         break
 
-    """
-    print(ret['sniff_time'].strftime("%H:%M:%S.%f") + "\t", end = "")
-    for k in ret['info'].keys():
-        print(str(ret['info'][k]) + "|", end = "")
-    print("")
-    """
+    if g_pkt_info_file_name != "":
+        print(ret['sniff_time'].strftime("%H:%M:%S.%f") + "|", file = g_pkt_info_file, end = "")
+        for k in ret['info'].keys():
+            print(str(ret['info'][k]) + "|", file = g_pkt_info_file, end = "")
+        print("", file = g_pkt_info_file)
 
     ts = ret['info']['ts']
     if ts not in g_stat_dict.keys():
@@ -130,6 +154,8 @@ while True:
     else:
         times_delta = ret['sniff_time'] - g_stat_dict[ts]['min_sniff_time'] 
         if times_delta <= g_ts_repeat_times_delta:
+            if ret['info']['pkt_no'] in g_stat_dict[ts]['pkt_no']: continue
+
             g_stat_dict[ts]['pkt_no'].append(ret['info']['pkt_no'])
             if(ret['sniff_time'] < g_stat_dict[ts]['min_sniff_time']):
                 g_stat_dict[ts]['min_sniff_time'] = ret['sniff_time']
@@ -147,6 +173,8 @@ while True:
     g_cnt_idx += 1
     if g_cnt_idx >= g_fluch_cnt:
         g_data_group_file.flush()
+        if g_pkt_info_file_name != "":
+            g_pkt_info_file.flush()
         g_cnt_idx = 0
 
 #if there are remaining pkts, they are all bad.
@@ -164,6 +192,8 @@ print("\n" + bg_dg_r_s , file = g_data_group_file)
 print("\n" + bg_dg_r_s)
 
 g_data_group_file.close()
+if g_pkt_info_file_name != "":
+    g_pkt_info_file.close()
 
 g_end_dt = datetime.datetime.now()
 print(g_end_dt.strftime("\n%Y%m%d-%H:%M:%S.%f") + " end process.")

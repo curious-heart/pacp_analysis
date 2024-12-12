@@ -4,13 +4,14 @@ from datetime import timedelta
 import sys
 import os
 
-usage_str = "usage: " + os.path.basename(__file__) + " pacp-file-name"
-if len(sys.argv) != 2:
+usage_str = "usage: " + os.path.basename(__file__) + " pacp-file-name [out-put-file-name]"
+if len(sys.argv) != 2 and len(sys.argv) != 3:
     print(usage_str)
     sys.exit(0)
 g_pacp_file_name = sys.argv[1]
+g_output_file_name = "data_groups.txt" if len(sys.argv) !=3 else sys.argv[2]
 g_pacp_display_filter='(ip.src == 24.26.7.51) && (udp) && (ip.len>=100)'
-g_output_file_name = "data_groups.txt"
+
 #data begins with "bcbc". e.g.
 #bc bc e1 00
 #[0] is start byte number, and [1] is byte count. "*2" is becaue pkt.data.data is a string...

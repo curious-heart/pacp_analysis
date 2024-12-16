@@ -5,6 +5,9 @@ import sys
 import os
 import argparse
 
+g_version = '2.00'
+g_app_name = os.path.basename(__file__).split('.')[0]
+
 g_pacp_file_opt_key = 'pacp_file'
 g_output_file_opt_key = 'output_file'
 g_pkt_info_file_opt_key = 'pkt_info_file'
@@ -12,10 +15,11 @@ g_pkt_info_file_opt_key = 'pkt_info_file'
 g_def_output_file_name = "data_groups.txt" 
 g_def_pkt_info_file_name = "pkt_info_file.txt"
 
-parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser(prog = g_app_name)
 parser.add_argument(g_pacp_file_opt_key, default = "", help = "pacp file name")
 parser.add_argument('-o', '--' + g_output_file_opt_key, default = g_def_output_file_name, help = "output file name")
 parser.add_argument('-p', '--' + g_pkt_info_file_opt_key, default = "", help = "file name to rec pkt info")
+parser.add_argument('--version', action = "version", version = "%(prog)s" + " " + g_version)
 cmd_args = vars(parser.parse_args())
 g_pacp_file_name = cmd_args[g_pacp_file_opt_key]
 g_output_file_name = cmd_args[g_output_file_opt_key]

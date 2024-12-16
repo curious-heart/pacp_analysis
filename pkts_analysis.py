@@ -4,9 +4,14 @@ from datetime import timedelta
 import sys
 import os
 import argparse
+from ring_link.ring_link import *
 
-g_version = '2.00'
+g_version = '2.00.00'
 g_app_name = os.path.basename(__file__).split('.')[0]
+
+"""
+assumption: sniff time is in ascendant order.
+"""
 
 g_pacp_file_opt_key = 'pacp_file'
 g_output_file_opt_key = 'output_file'
@@ -15,19 +20,52 @@ g_pkt_info_file_opt_key = 'pkt_info_file'
 g_def_output_file_name = "data_groups.txt" 
 g_def_pkt_info_file_name = "pkt_info_file.txt"
 
+g_pkt_timeout_ms_key = 'pkt_timeout_ms'
+g_dg_timeout_ms_key = 'dg_timeout_ms'
+g_def_pkt_timeout_ms = 500.0 #500ms
+g_def_dg_timeout_ms = 500.0 #500ms
+
+g_max_ts_key = 'max_ts_key'
+g_def_max_ts = 65535
+
+g_expect_start_ts_key = 'start_key'
+g_def_expect_start_ts = 0
+
 parser = argparse.ArgumentParser(prog = g_app_name)
 parser.add_argument(g_pacp_file_opt_key, default = "", help = "pacp file name")
-parser.add_argument('-o', '--' + g_output_file_opt_key, default = g_def_output_file_name, help = "output file name")
-parser.add_argument('-p', '--' + g_pkt_info_file_opt_key, default = "", help = "file name to rec pkt info")
+parser.add_argument('-o', '--' + g_output_file_opt_key, default = g_def_output_file_name, 
+        help = "output file name. default as {}".format(g_def_output_file_name))
+parser.add_argument('-p', '--' + g_pkt_info_file_opt_key, default = "", 
+        help = "file name to rec pkt info. if not assigned, pkt info is not recorded.")
+parser.add_argument('--' + g_pkt_timeout_ms_key, default = g_def_pkt_timeout_ms, type = float,
+        help = "packet receive timeout, in ms. default as {}".format(g_def_pkt_timeout_ms))
+parser.add_argument('--' + g_dg_timeout_ms_key, default = g_def_dg_timeout_ms, type = float,
+        help = "data group (15 packets) receive timeout, in ms. default as {}".format(g_def_dg_timeout_ms))
+parser.add_argument('--' + g_max_ts_key, default = g_def_max_ts, type = int,
+                help = "the max timestamp value. valid value is considered between [0, max_ts_key]."
+                       "deault as {}".format(g_def_max_ts))
+parser.add_argument('--' + g_expect_start_ts_key, default = g_def_expect_start_ts, type = int,
+        help = "expect start key. default as {}".format(g_def_expect_start_ts))
 parser.add_argument('--version', action = "version", version = "%(prog)s" + " " + g_version)
+
 cmd_args = vars(parser.parse_args())
 g_pacp_file_name = cmd_args[g_pacp_file_opt_key]
 g_output_file_name = cmd_args[g_output_file_opt_key]
 g_pkt_info_file_name = cmd_args[g_pkt_info_file_opt_key]
 
-print('{} is :{}'.format(g_pacp_file_opt_key, g_pacp_file_name))
-print('{} is :{}'.format(g_output_file_opt_key, g_output_file_name))
-print('{} is :{}'.format(g_pkt_info_file_opt_key , g_pkt_info_file_name))
+g_pkt_timeout_ms = cmd_args[g_pkt_timeout_ms_key]
+g_dg_timeout_ms = cmd_args[g_dg_timeout_ms_key]
+g_pkt_timeout_delta = timedelta(0, 0, g_pkt_timeout_ms * 1000) 
+g_dg_timeout_delta = timedelta(0, 0, g_dg_timeout_ms * 1000) 
+
+g_max_ts = cmd_args[g_max_ts_key]
+g_max_ts_digits = len(str(g_max_ts))
+
+g_expect_start_ts = cmd_args[g_expect_start_ts_key]
+
+print('{} is: {}'.format(g_pacp_file_opt_key, g_pacp_file_name))
+print('{} is: {}'.format(g_output_file_opt_key, g_output_file_name))
+print('{} is: {}'.format(g_pkt_info_file_opt_key , g_pkt_info_file_name))
 
 g_pacp_display_filter='(ip.src == 24.26.7.51) && (udp) && (ip.len>=100)'
 
@@ -66,6 +104,7 @@ def get_a_pkt(cap):
                          == g_cmd_bytes_str):
                 pkt['ret'] = True
                 pkt['sniff_time'] = udp_pkt.sniff_time
+                pkt['number'] = udp_pkt.number
                 pkt['info'] = dict()
                 for k in g_pkt_ele_pos_dict.keys():
                     pkt['info'][k] \
@@ -79,40 +118,128 @@ g_statistics_dict = \
 {
     'total_pkt' : 0,
     'total_dg' : 0,
-    'good_dg' : 0,
-    'bad_dg' : 0,
+    '\tgood_dg' : 0,
+    '\tbad_dg' : 0,
+    '\t\tincomplete_dg' : 0,
+    '\t\ttimeout_dg' : 0,
+    '\t\tlost_dg' : 0,
 }
-def record_data_group(good, d_g, rec_file):
-    min_dt_s = d_g['min_sniff_time'].strftime("%Y%m%d-%H:%M:%S.%f")
-    max_dt_s = d_g['max_sniff_time'].strftime("%Y%m%d-%H:%M:%S.%f")
-    t_delta = d_g['max_sniff_time'] - d_g['min_sniff_time']
-    print(str(d_g['ts']) + "\t", file = rec_file, end = "")
-    print(min_dt_s + "\t" + max_dt_s + "\t", file = rec_file, end = "")
-    t_delta_us = t_delta.seconds * 1000000 + t_delta.microseconds
-    print(str(t_delta_us) + "\t\t", file = rec_file, end = "")
-    if(good):
-        print("good\t", file = rec_file, end = "")
-        g_statistics_dict['good_dg'] += 1
-        g_statistics_dict['total_pkt'] += d_g['pkt_cnt_per_line']
-    else:
-        print("bad\t\t", file = rec_file, end = "")
-        print('-'.join(map(str, d_g['pkt_no'])) + "\t", file = rec_file, end = "")
-        g_statistics_dict['bad_dg'] += 1
-        g_statistics_dict['total_pkt'] += len(d_g['pkt_no'])
 
-    g_statistics_dict['total_dg'] += 1
-    print("", file = rec_file)
-
-def count_a_new_pkt(data_group, pkt_info):
+def count_a_new_dg(pkt_info):
+    """
+    status: 
+        incomp: incomplete
+        lost: lost
+        good: completed
+        timeout: timeout
+    """
+    data_group = dict()
+    data_group['number'] = pkt_info['number']
     data_group['ts'] = pkt_info['info']['ts']
     data_group['pkt_cnt_per_line'] = pkt_info['info']['pkt_cnt_per_line']
     data_group['pkt_no'] = [pkt_info['info']['pkt_no']]
     data_group['min_sniff_time'] = pkt_info['sniff_time']
     data_group['max_sniff_time'] = pkt_info['sniff_time']
+    data_group['status'] = 'incomp'
+    return data_group
+
+def count_and_output_dg(d_g, rec_file):
+    g_statistics_dict['total_dg'] += 1
+
+    print("{}\t".format(d_g['number']), file = rec_file, end = "")
+    print("{:0{}}\t".format(d_g['ts'], g_max_ts_digits), file = rec_file, end = "")
+    if 'lost' == d_g['status']:
+        g_statistics_dict['\t\tlost_dg'] += 1
+        g_statistics_dict['\tbad_dg'] += 1
+        print('\t' + d_g['status'], file = rec_file)
+        return
+
+    min_dt_s = d_g['min_sniff_time'].strftime("%Y%m%d-%H:%M:%S.%f")
+    max_dt_s = d_g['max_sniff_time'].strftime("%Y%m%d-%H:%M:%S.%f")
+    t_delta = d_g['max_sniff_time'] - d_g['min_sniff_time']
+    print(min_dt_s + "\t" + max_dt_s + "\t", file = rec_file, end = "")
+    t_delta_us = t_delta.seconds * 1000000 + t_delta.microseconds
+    print(str(t_delta_us) + "\t\t", file = rec_file, end = "")
+    print(d_g['status'] + '\t', file = rec_file, end = "")
+    if 'good' == d_g['status']:
+        g_statistics_dict['\tgood_dg'] += 1
+        g_statistics_dict['total_pkt'] += d_g['pkt_cnt_per_line']
+    else:
+        if 'timeout' == d_g['status']:
+            g_statistics_dict['\t\ttimeout_dg'] += 1
+        else: #imcomplete
+            g_statistics_dict['\t\tincomplete_dg'] += 1
+        g_statistics_dict['\tbad_dg'] += 1
+        g_statistics_dict['total_pkt'] += len(d_g['pkt_no'])
+        print('-'.join(map(str, d_g['pkt_no'])) + "\t", file = rec_file, end = "")
+
+    print("", file = rec_file)
+
+def count_and_output_lost_dgs(rl, s, e, rec_file, e_inc = False):
+    dg = dict()
+    dg['number'] = -1
+    dg['ts'] = 0
+    dg['status'] = 'lost'
+
+    while s != e:
+        dg['ts'] = s
+        count_and_output_dg(dg, rec_file)
+        s = (s + 1) % rl['capacity']
+    if e_inc:
+        dg['ts'] = e
+        count_and_output_dg(dg, rec_file)
+
+def refresh_dgs_part(rl, till_node, rec_file):
+    if till_node == None: return
+
+    s_node, e_node = rl['head'], till_node
+    before_extra = after_extra = False
+    if not in_round_range(rl['ctrl_blk']['expect_min_ts'], s_node['idx'], e_node['idx'], rl['capacity'], True, True):
+        n_h_dist = count_round_number(rl['ctrl_blk']['expect_min_ts'], rl['head']['idx'], rl['capacity'], False)
+        t_n_dist = count_round_number(rl['tail']['idx'], rl['ctrl_blk']['expect_min_ts'], rl['capacity'], False)
+        if n_h_dist < t_n_dist: before_extra = True
+        else: after_extra = True
+
+    dg = dict()
+    dg['ts'] = 0
+    dg['status'] = 'lost'
+    s_ts, e_ts = s_node['idx'], e_node['idx']
+    if before_extra: count_and_output_lost_dgs(rl, rl['ctrl_blk']['expect_min_ts'], s_ts, rec_file)
+
+    #output s_node to e_node, inclusive.
+    finished = False
+    while not finished:
+        idx = s_node['idx']
+        count_and_output_dg(s_node['data'], rec_file)
+        if not(s_node is e_node):
+            inc_idx_by_1 = (idx + 1) % rl['capacity']
+            if inc_idx_by_1 != s_node['next']['idx']:
+                count_and_output_lost_dgs(rl, inc_idx_by_1, s_node['next']['idx'], rec_file)
+        else:
+            finished = True
+        tmp = s_node
+        s_node = s_node['next']
+        del_node_from_ring_link(rl, tmp)
+
+    
+    if after_extra: count_and_output_lost_dgs(rl, e_ts, rl['ctrl_blk']['expect_min_ts'], rec_file)
+
+    rl['ctrl_blk']['expect_min_ts'] = (e_ts + 1) % rl['capacity']
+
+    if ring_link_is_empty(rl): rl['ctrl_blk']['min_t_node'] = None
+    else:
+        min_t_n = rl['head']
+        curr_n = rl['head']['next']
+        while not(curr_n is rl['head']):
+            if curr_n['data']['min_sniff_time'] < min_t_n['data']['min_sinff_time']: min_t_n = curr_n
+            curr_n = curr_n['next']
+        rl['ctrl_blk']['min_t_node'] = min_t_n
+
+####################################################################################################
 
 try:
     g_data_group_file = open(g_output_file_name, "w")
-    print("时间戳\t最小时间\t\t\t最大时间\t\t\t时间差(us)\t是否完整\t包序号", file = g_data_group_file)
+    print("No.\t时间戳\t最小时间\t\t\t最大时间\t\t\t时间差(us)\t是否完整\t包序号", file = g_data_group_file)
 except IOError:
     print("Open output file " + g_output_file_name + " error.")
     sys.exit(-1)
@@ -129,14 +256,16 @@ if g_pkt_info_file_name != "":
 
 g_captured_pkts = pyshark.FileCapture(g_pacp_file_name, display_filter=g_pacp_display_filter, keep_packets = False)
 
-g_ts_repeat_times_delta = timedelta(0, 52) #52 seconds
 
 g_start_dt = datetime.datetime.now()
 print(g_start_dt.strftime("%Y%m%d-%H:%M:%S.%f") + " start process")
 print("\nprocessing...\n")
 
+g_dg_ring_link = init_ring_link(g_max_ts + 1)
+g_dg_ring_link['ctrl_blk'] = dict()
+g_dg_ring_link['ctrl_blk']['min_t_node'] = None
+g_dg_ring_link['ctrl_blk']['expect_min_ts'] = g_expect_start_ts
 
-g_stat_dict = {}
 g_fluch_cnt = 10 * 15
 g_cnt_idx = 0
 while True:
@@ -152,28 +281,49 @@ while True:
         print("", file = g_pkt_info_file)
 
     ts = ret['info']['ts']
-    if ts not in g_stat_dict.keys():
-        g_stat_dict[ts] = dict({})
-        count_a_new_pkt(g_stat_dict[ts], ret)
-    else:
-        times_delta = ret['sniff_time'] - g_stat_dict[ts]['min_sniff_time'] 
-        if times_delta <= g_ts_repeat_times_delta:
-            if ret['info']['pkt_no'] in g_stat_dict[ts]['pkt_no']: continue
-
-            g_stat_dict[ts]['pkt_no'].append(ret['info']['pkt_no'])
-            if(ret['sniff_time'] < g_stat_dict[ts]['min_sniff_time']):
-                g_stat_dict[ts]['min_sniff_time'] = ret['sniff_time']
-            if(ret['sniff_time'] > g_stat_dict[ts]['max_sniff_time']):
-                g_stat_dict[ts]['max_sniff_time'] = ret['sniff_time']
-            if(len(g_stat_dict[ts]['pkt_no']) >= g_stat_dict[ts]['pkt_cnt_per_line']):
-                #a good data group
-                record_data_group(True, g_stat_dict[ts], g_data_group_file)
-                del g_stat_dict[ts]
+    sniff_t = ret['sniff_time']
+    sniff_t_str = sniff_t.strftime("%Y%m%d-%H:%M:%S.%f")
+    curr_node = None
+    if ts not in g_dg_ring_link['indices'].keys():
+        new_dg = count_a_new_dg(ret)
+        curr_node = get_a_new_ring_link_node(ts)
+        curr_node['data'] = new_dg
+        ins_ret = insert_node_into_ring_link(g_dg_ring_link, curr_node)
+        if ins_ret != 'normal':
+            print("ring link full: ts-{}, time-{}".format(ts, sniff_t_str))
+            #continue
         else:
-            #a bad data group
-            record_data_group(False, g_stat_dict[ts], g_data_group_file)
-            g_stat_dict[ts] = dict({})
-            count_a_new_pkt(g_stat_dict[ts], ret)
+            if g_dg_ring_link['ctrl_blk']['min_t_node'] == None:
+                g_dg_ring_link['ctrl_blk']['min_t_node'] = curr_node
+    else:
+        curr_node = g_dg_ring_link['indices'][ts]
+        pkt_t_delta = sniff_t - curr_node['data']['min_sniff_time']
+        if pkt_t_delta <= g_pkt_timeout_delta:
+            if ret['info']['pkt_no'] in curr_node['data']['pkt_no']: 
+                print("duplicate pkt_no {} in ts-{}, time-{}".format(ret['info']['pkt_no'], ts, sniff_t_str))
+                #continue
+            else:
+                curr_node['data']['pkt_no'].append(ret['info']['pkt_no'])
+                #this < branch should not be entered because we assume sniff time is in ascendant order
+                #if(ret['sniff_time'] < curr_node['data']['min_sniff_time']):
+                #    curr_node['data']['min_sniff_time'] = sniff_t
+                if(ret['sniff_time'] > curr_node['data']['max_sniff_time']):
+                    curr_node['data']['max_sniff_time'] = sniff_t
+                if(len(curr_node['data']['pkt_no']) >= curr_node['data']['pkt_cnt_per_line']):
+                    #a good data group
+                    curr_node['data']['status'] = 'good'
+        else:
+            curr_node['data']['status'] = 'timeout'
+            refresh_dgs_part(g_dg_ring_link, curr_node, g_data_group_file)
+            new_dg = count_a_new_dg(ret)
+            curr_node = get_a_new_ring_link(ts)
+            curr_node['data'] = new_dg
+            insert_node_into_ring_link(g_dg_ring_link, curr_node)
+
+    dg_t_delta = sniff_t - g_dg_ring_link['ctrl_blk']['min_t_node']['data']['min_sniff_time']
+    if dg_t_delta >= g_dg_timeout_delta:
+        refresh_dgs_part(g_dg_ring_link, curr_node['prev'], g_data_group_file)
+        
     g_cnt_idx += 1
     if g_cnt_idx >= g_fluch_cnt:
         g_data_group_file.flush()
@@ -182,15 +332,14 @@ while True:
         g_cnt_idx = 0
 
 #if there are remaining pkts, they are all bad.
-for k, v in g_stat_dict.items():
-    record_data_group(False, v, g_data_group_file)
+refresh_dgs_part(g_dg_ring_link, g_dg_ring_link['tail'], g_data_group_file)
 
 print("", file = g_data_group_file)
 for k, v in g_statistics_dict.items(): 
-    print(k + ":" + str(v))
-    print(k + ":" + str(v), file = g_data_group_file)
+    print(k + ": " + str(v))
+    print(k + ": " + str(v), file = g_data_group_file)
 bad_dg_ratio = 0 if 0 == g_statistics_dict['total_dg'] \
-                else g_statistics_dict['bad_dg']/float(g_statistics_dict['total_dg'])
+                else g_statistics_dict['\tbad_dg']/float(g_statistics_dict['total_dg'])
 bg_dg_r_s = "bad data group ration: {:.2%}".format(bad_dg_ratio)
 print("\n" + bg_dg_r_s , file = g_data_group_file)
 print("\n" + bg_dg_r_s)

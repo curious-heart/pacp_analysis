@@ -6,7 +6,7 @@ import os
 import argparse
 from ring_link.ring_link import *
 
-g_version = '2.01.00'
+g_version = '2.02.00'
 g_app_name = os.path.basename(__file__).split('.')[0]
 
 """
@@ -32,11 +32,13 @@ g_def_dg_timeout_ms = 500.0 #500ms
 g_max_ts_key = 'max_ts_key'
 g_def_max_ts = 65535
 
-g_expect_start_ts_key = 'start_key'
-g_def_expect_start_ts = 0
+g_expect_start_ts_key = 'start_ts'
+g_def_expect_start_ts = -1 #0
 
 g_flush_cnt_key = 'flush_cnt'
 g_def_flush_cnt = 100 * 15
+
+g_expand_output_log_dgs_key = 'expand_lost_dgs'
 
 parser = argparse.ArgumentParser(prog = g_app_name)
 parser.add_argument(g_pacp_file_opt_key, default = "", help = "pacp file name")
@@ -52,7 +54,7 @@ parser.add_argument('--' + g_max_ts_key, default = g_def_max_ts, type = int,
                 help = "the max timestamp value. valid value is considered between [0, max_ts_key]."
                        "deault as {}".format(g_def_max_ts))
 parser.add_argument('--' + g_expect_start_ts_key, default = g_def_expect_start_ts, type = int,
-        help = "expect start key. default as {}".format(g_def_expect_start_ts))
+        help = "expected start ts. if not assigned, use the ts in the 1st sniffed pkt.")
 parser.add_argument('--' + g_flush_cnt_key, default = g_def_flush_cnt, type = int,
         help = "assign an int number. output file is flushed every that number of dgs are processed."
                "increase this number may decrease process time but require more memory."
@@ -61,6 +63,9 @@ parser.add_argument('--' + g_dup_pkt_rec_file_opt_key, default = g_def_dup_pkt_r
         help = "file to record duplicate pkt info. default as {}".format(g_def_dup_pkt_rec_file_name))
 parser.add_argument('--' + g_discarded_pkt_rec_file_opt_key, default = g_def_discarded_pkt_rec_file_name,
         help = "file to record discared pkt(rb-full) info. default as {}".format(g_def_discarded_pkt_rec_file_name))
+parser.add_argument('--' + g_expand_output_log_dgs_key, dest = g_expand_output_log_dgs_key, action = 'store_true',
+        help = "expand lost dgs or not. if not expand, output is as 's~e lost' in one line;"
+               " otherwise, each lost dg in one line")
 parser.add_argument('--version', action = "version", version = "%(prog)s" + " " + g_version)
 
 cmd_args = vars(parser.parse_args())
@@ -82,6 +87,9 @@ g_flush_cnt = cmd_args[g_flush_cnt_key]
 
 g_dup_pkt_rec_file_name = cmd_args[g_dup_pkt_rec_file_opt_key]
 g_discarded_pkt_rec_file_name = cmd_args[g_discarded_pkt_rec_file_opt_key]
+
+g_expand_ouput_lost_dgs = cmd_args[g_expand_output_log_dgs_key]
+
 
 print('{} is: {}'.format(g_pacp_file_opt_key, g_pacp_file_name))
 print('{} is: {}'.format(g_output_file_opt_key, g_output_file_name))
@@ -172,16 +180,32 @@ def count_a_new_dg(pkt_info):
     data_group['status'] = 'incomp'
     return data_group
 
-def count_and_output_dg(d_g, rec_file):
-    g_statistics_dict['total_dg'] += 1
+def count_and_output_dg(rl, d_g, rec_file):
+    if 'lost' == d_g['status']:
+        s, e = d_g['ts'], d_g['pkt_no']
+        cnt = count_round_number(s, e, rl['capacity'])
+        g_statistics_dict['\t\tlost_dg'] += cnt
+        g_statistics_dict['\tbad_dg'] += cnt
+        g_statistics_dict['total_dg'] += cnt
+        if g_expand_ouput_lost_dgs:
+            for i in range(cnt):
+                print("{}\t".format(d_g['number']), file = rec_file, end = "")
+                print("{:0{}}\t".format(s, g_max_ts_digits), file = rec_file, end = "")
+                print(('\t' * 10) + d_g['status'], file = rec_file)
+                s = (s + 1) % rl['capacity']
+        else:
+            print("{}\t".format(d_g['number']), file = rec_file, end = "")
+            if s == e:
+                print("{:0{}}\t".format(s, g_max_ts_digits), file = rec_file, end = "")
+                print(('\t' * 10) + d_g['status'], file = rec_file)
+            else:
+                print("{:0{}}~{:0{}}\t".format(s, g_max_ts_digits, e, g_max_ts_digits), file = rec_file, end = "")
+                print(('\t' * 9) + d_g['status'], file = rec_file)
+        return
 
+    g_statistics_dict['total_dg'] += 1
     print("{}\t".format(d_g['number']), file = rec_file, end = "")
     print("{:0{}}\t".format(d_g['ts'], g_max_ts_digits), file = rec_file, end = "")
-    if 'lost' == d_g['status']:
-        g_statistics_dict['\t\tlost_dg'] += 1
-        g_statistics_dict['\tbad_dg'] += 1
-        print(('\t' * 10) + d_g['status'], file = rec_file)
-        return
 
     min_dt_s = d_g['min_sniff_time'].strftime("%Y%m%d-%H:%M:%S.%f")
     max_dt_s = d_g['max_sniff_time'].strftime("%Y%m%d-%H:%M:%S.%f")
@@ -205,18 +229,15 @@ def count_and_output_dg(d_g, rec_file):
     print("", file = rec_file)
 
 def count_and_output_lost_dgs(rl, s, e, rec_file, e_inc = False):
+    """
+    for 'lost' dg, 'ts' indicates start ts, 'pkt_no' indicates end (inclusive) ts.
+    """
     dg = dict()
     dg['number'] = -1
-    dg['ts'] = 0
+    dg['ts'] = s
+    dg['pkt_no'] = e if e_inc else ((e + rl['capacity'] - 1) % rl['capacity'])
     dg['status'] = 'lost'
-
-    while s != e:
-        dg['ts'] = s
-        count_and_output_dg(dg, rec_file)
-        s = (s + 1) % rl['capacity']
-    if e_inc:
-        dg['ts'] = e
-        count_and_output_dg(dg, rec_file)
+    count_and_output_dg(rl, dg, rec_file)
 
 def refresh_dgs_part(rl, till_node, rec_file):
     if till_node == None: return
@@ -239,7 +260,7 @@ def refresh_dgs_part(rl, till_node, rec_file):
     finished = False
     while not finished:
         idx = s_node['idx']
-        count_and_output_dg(s_node['data'], rec_file)
+        count_and_output_dg(rl, s_node['data'], rec_file)
         if not(s_node is e_node):
             inc_idx_by_1 = (idx + 1) % rl['capacity']
             if inc_idx_by_1 != s_node['next']['idx']:
@@ -293,9 +314,10 @@ print("\nprocessing...\n")
 g_dg_ring_link = init_ring_link(g_max_ts + 1)
 g_dg_ring_link['ctrl_blk'] = dict()
 g_dg_ring_link['ctrl_blk']['min_t_node'] = None
-g_dg_ring_link['ctrl_blk']['expect_min_ts'] = g_expect_start_ts
+#g_dg_ring_link['ctrl_blk']['expect_min_ts'] = g_expect_start_ts
 
 g_cnt_idx = 0
+g_is_first_pkt = True
 while True:
     ret = get_a_pkt(g_captured_pkts)
     if not(ret['ret']):
@@ -310,6 +332,10 @@ while True:
         print("", file = g_pkt_info_file)
 
     ts = ret['info']['ts']
+    if g_is_first_pkt:
+        g_dg_ring_link['ctrl_blk']['expect_min_ts'] = ts if g_expect_start_ts < 0 else g_expect_start_ts
+        g_is_first_pkt = False
+
     sniff_t = ret['sniff_time']
     sniff_t_str = sniff_t.strftime("%Y%m%d-%H:%M:%S.%f")
     curr_node = None

@@ -6,7 +6,7 @@ import os
 import argparse
 from ring_link.ring_link import *
 
-g_version = '2.00.00'
+g_version = '2.01.00'
 g_app_name = os.path.basename(__file__).split('.')[0]
 
 """
@@ -399,7 +399,7 @@ for k,v in g_except_pkt_number_dict.items():
             print(v['header'], file = fn)
             for i in range(len(v['data'])): 
                 print("|", end = "", file = fn)
-                for kk, vv in v['data'][i]:
+                for kk, vv in v['data'][i].items():
                     print(vv, end = "", file = fn)
                     print("|", end = "", file = fn)
                 print("", file = fn)

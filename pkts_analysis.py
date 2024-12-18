@@ -6,7 +6,7 @@ import os
 import argparse
 from ring_link.ring_link import *
 
-g_version = '2.03.00'
+g_version = '2.04.00'
 g_app_name = os.path.basename(__file__).split('.')[0]
 
 """
@@ -281,7 +281,7 @@ def refresh_dgs_part(rl, till_node, rec_file):
         min_t_n = rl['head']
         curr_n = rl['head']['next']
         while not(curr_n is rl['head']):
-            if curr_n['data']['min_sniff_time'] < min_t_n['data']['min_sinff_time']: min_t_n = curr_n
+            if curr_n['data']['min_sniff_time'] < min_t_n['data']['min_sniff_time']: min_t_n = curr_n
             curr_n = curr_n['next']
         rl['ctrl_blk']['min_t_node'] = min_t_n
 
@@ -368,9 +368,9 @@ while True:
             else:
                 curr_node['data']['pkt_no'].append(ret['info']['pkt_no'])
                 #this < branch should not be entered because we assume sniff time is in ascendant order
-                #if(ret['sniff_time'] < curr_node['data']['min_sniff_time']):
+                #if(sniff_t < curr_node['data']['min_sniff_time']):
                 #    curr_node['data']['min_sniff_time'] = sniff_t
-                if(ret['sniff_time'] > curr_node['data']['max_sniff_time']):
+                if(sniff_t > curr_node['data']['max_sniff_time']):
                     curr_node['data']['max_sniff_time'] = sniff_t
                 if(len(curr_node['data']['pkt_no']) >= curr_node['data']['pkt_cnt_per_line']):
                     #a good data group
@@ -383,9 +383,15 @@ while True:
             curr_node['data'] = new_dg
             insert_node_into_ring_link(g_dg_ring_link, curr_node)
 
-    dg_t_delta = sniff_t - g_dg_ring_link['ctrl_blk']['min_t_node']['data']['min_sniff_time']
+    min_t_n = g_dg_ring_link['ctrl_blk']['min_t_node']
+    dg_t_delta = sniff_t - min_t_n['data']['min_sniff_time']
     if dg_t_delta >= g_dg_timeout_delta:
-        refresh_dgs_part(g_dg_ring_link, curr_node['prev'], g_data_group_file)
+        e_n = min_t_n['next']
+        while not(e_n is g_dg_ring_link['head']) \
+            and (sniff_t - e_n['data']['min_sniff_time'] >= g_dg_timeout_delta):
+            e_n = e_n['next']
+        if e_n is g_dg_ring_link['head']: e_n = e_n['prev']
+        refresh_dgs_part(g_dg_ring_link, e_n, g_data_group_file)
         
     g_cnt_idx += 1
     if g_cnt_idx >= g_flush_cnt:

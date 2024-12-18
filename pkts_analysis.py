@@ -6,7 +6,7 @@ import os
 import argparse
 from ring_link.ring_link import *
 
-g_version = '2.02.00'
+g_version = '2.03.00'
 g_app_name = os.path.basename(__file__).split('.')[0]
 
 """
@@ -200,7 +200,7 @@ def count_and_output_dg(rl, d_g, rec_file):
                 print(('\t' * 10) + d_g['status'], file = rec_file)
             else:
                 print("{:0{}}~{:0{}}\t".format(s, g_max_ts_digits, e, g_max_ts_digits), file = rec_file, end = "")
-                print(('\t' * 9) + d_g['status'], file = rec_file)
+                print(('\t' * 9) + d_g['status'] + '(' + str(cnt) + ')', file = rec_file)
         return
 
     g_statistics_dict['total_dg'] += 1

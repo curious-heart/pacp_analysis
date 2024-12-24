@@ -1,14 +1,10 @@
 """
-A ring link uses link to simulate ring buffer.
-        _____________________________________
-       |                                     |
-      \ /                                    |
-       |                                     |
-    ========       ========       ========   |
-    | data |       | data |       | data |   |
-    | idx  |       | idx  |       | idx  |   |
-    --------       --------       --------   |
-    | prev | <--   | prev | <--   | prev | --|
+A ring link uses link to simulate ring buffer, its body is as the following:
+    ========       ========       ========
+    | data |       | data |       | data |
+    | idx  |       | idx  |       | idx  |
+    --------       --------       --------
+    | prev | <--   | prev | <--   | prev |
     | next | -->   | next | -->   | next |
     ========       ========       ========
        |                             |
@@ -16,9 +12,16 @@ A ring link uses link to simulate ring buffer.
        |_____________________________|
 
 'data' is user defined part;
-'idx' is the index of "ring buffer". it should be in [0, capacity - 1] ("capacity" is recorded in "handler"),
-and loop in this range.
+'idx' is the index of "ring buffer". it should be in [0, capacity - 1] (see below "handler"), and loop in this range.
 For efficiency, there is a "handler" which contains a dict indexed by 'idx'.
+All "idx" of nodes are in ascendant order, and "head" can points to any node.
+
+The "handler", contains "head" and "tail" pointing to head and tail node of above body (they actually point
+to two neighbor nodes), "capacity" indicating the maximum nodes the link can contain, "cnt" recording the number of
+nodes, "indices" dictionary of {index, node} pair for quick locating node, and a "ctrl_blk" for customizaiton info.
+
+E.g, if "capacity" is 8, indices of nodes in a full link is "0->1->2->3->4->5->6->7", and "head" may be 2 (the "tail"
+is 1).
 """
 _g_def_round_len = 65536
 def init_ring_link(capacity = _g_def_round_len):

@@ -6,7 +6,7 @@ import os
 import argparse
 from ring_link.ring_link import *
 
-g_version = '2.04.00'
+g_version = '2.05.00'
 g_app_name = os.path.basename(__file__).split('.')[0]
 
 """
@@ -127,7 +127,8 @@ def get_a_pkt(cap):
     while True:
         try:
             udp_pkt = cap.next()
-            ds = str(udp_pkt.data.data)
+            #ds = str(udp_pkt.data.data)
+            ds = udp_pkt.udp.payload.replace(":", "")
             if(ds[g_pkt_ele_pos_dict['cmd'][0] :  g_pkt_ele_pos_dict['cmd'][0] + g_pkt_ele_pos_dict['cmd'][1]] 
                          == g_cmd_bytes_str):
                 pkt['ret'] = True

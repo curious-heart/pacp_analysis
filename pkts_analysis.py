@@ -6,7 +6,7 @@ import os
 import argparse
 from ring_link.ring_link import *
 
-g_version = '2.05.00'
+g_version = '2.06.00'
 g_app_name = os.path.basename(__file__).split('.')[0]
 
 """
@@ -40,6 +40,9 @@ g_def_flush_cnt = 100 * 15
 
 g_expand_output_log_dgs_key = 'expand_lost_dgs'
 
+g_min_valid_pkt_len_key = 'min_valid_pkt_len'
+g_def_min_valid_pkt_len = 100
+
 parser = argparse.ArgumentParser(prog = g_app_name)
 parser.add_argument(g_pacp_file_opt_key, default = "", help = "pacp file name")
 parser.add_argument('-o', '--' + g_output_file_opt_key, default = g_def_output_file_name, 
@@ -66,6 +69,9 @@ parser.add_argument('--' + g_discarded_pkt_rec_file_opt_key, default = g_def_dis
 parser.add_argument('--' + g_expand_output_log_dgs_key, dest = g_expand_output_log_dgs_key, action = 'store_true',
         help = "expand lost dgs or not. if not expand, output is as 's~e lost' in one line;"
                " otherwise, each lost dg in one line")
+parser.add_argument('--' + g_min_valid_pkt_len_key, default = g_def_min_valid_pkt_len, type = int,
+        help = "the mininum len of packet that are taken as valid."
+                "used as pcap filter. default as {}.".format(g_def_min_valid_pkt_len))
 parser.add_argument('--version', action = "version", version = "%(prog)s" + " " + g_version)
 
 cmd_args = vars(parser.parse_args())
@@ -89,13 +95,14 @@ g_dup_pkt_rec_file_name = cmd_args[g_dup_pkt_rec_file_opt_key]
 g_discarded_pkt_rec_file_name = cmd_args[g_discarded_pkt_rec_file_opt_key]
 
 g_expand_ouput_lost_dgs = cmd_args[g_expand_output_log_dgs_key]
+g_min_valid_pkt_len = cmd_args[g_min_valid_pkt_len_key]
 
 
 print('{} is: {}'.format(g_pacp_file_opt_key, g_pacp_file_name))
 print('{} is: {}'.format(g_output_file_opt_key, g_output_file_name))
 if g_pkt_info_file_name: print('{} is: {}'.format(g_pkt_info_file_opt_key , g_pkt_info_file_name))
 
-g_pacp_display_filter='(ip.src == 24.26.7.51) && (udp) && (ip.len>=100)'
+g_pacp_display_filter='(ip.src == 24.26.7.51) && (udp) && (ip.len>={})'.format(g_min_valid_pkt_len)
 
 #data begins with "bcbc". e.g.
 #bc bc e1 00
@@ -128,7 +135,7 @@ def get_a_pkt(cap):
         try:
             udp_pkt = cap.next()
             #ds = str(udp_pkt.data.data)
-            ds = udp_pkt.udp.payload.replace(":", "")
+            ds = udp_pkt.udp.payload.raw_value
             if(ds[g_pkt_ele_pos_dict['cmd'][0] :  g_pkt_ele_pos_dict['cmd'][0] + g_pkt_ele_pos_dict['cmd'][1]] 
                          == g_cmd_bytes_str):
                 pkt['ret'] = True
@@ -420,6 +427,8 @@ g_used_time_dura = g_end_dt - g_start_dt
 time_elapsed_str = "time elapsed: {} days, {} seconds, {} us".format(g_used_time_dura.days, g_used_time_dura.seconds,  g_used_time_dura.microseconds)
 print("\n" + time_elapsed_str, file = g_data_group_file)
 print("\n" + time_elapsed_str)
+print("\n\n(" + g_app_name + " " + g_version + ")", file = g_data_group_file)
+print("\n\n(" + g_app_name + " " + g_version + ")")
 
 g_data_group_file.close()
 if g_pkt_info_file_name != "":

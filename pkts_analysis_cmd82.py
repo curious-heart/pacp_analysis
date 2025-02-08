@@ -38,7 +38,7 @@ g_def_dup_pkt_rec_file_name = "duplicate_pkts.txt"
 
 g_expand_output_log_dgs_key = 'expand_lost_pkts'
 g_min_valid_pkt_len_key = 'min_valid_pkt_len'
-g_def_min_valid_pkt_len = 100
+g_def_min_valid_pkt_len = 58
 
 parser = argparse.ArgumentParser(prog = g_app_name)
 parser.add_argument(g_pacp_file_opt_key, default = "", help = "pacp file name")
@@ -96,6 +96,9 @@ g_min_valid_pkt_len = cmd_args[g_min_valid_pkt_len_key]
 print('{} is: {}'.format(g_pacp_file_opt_key, g_pacp_file_name))
 print('{} is: {}'.format(g_output_file_opt_key, g_output_file_name))
 print('{} is: {}'.format(g_discarded_pkt_rec_file_opt_key, g_discarded_pkt_rec_file_name))
+
+#g_pacp_display_filter='(ip.src == 24.26.7.51) && (udp) && (ip.len>={})'.format(g_min_valid_pkt_len)
+g_pacp_display_filter='(udp) && (ip.len>={})'.format(g_min_valid_pkt_len)
 
 #data begins with "bcbc". e.g.
 #bc bc e1 00
@@ -155,47 +158,9 @@ g_statistics_dict = \
 g_discarded_pkt_rec_dict = \
 {
     'fn' : g_discarded_pkt_rec_file_name,
-    'header' : "|No.|ts|pkt_no|sniff_time|",
-    'pkts' : [] #every item is a dict: {'should_be_len': 0, 'len': 0, 'data': []}
+    'header' : "|No.|ts|sniff_time|len|should_be_len|data|",
+    'pkts' : [] #every item is a dict: {'should_be_len': 0, 'data': []}
 }
-
-def count_and_output_dg(rl, d_g, rec_file):
-    if 'lost' == d_g['status']:
-        s, e = d_g['ts'], d_g['pkt_no']
-        cnt = count_round_number(s, e, rl['capacity'])
-        if g_expand_ouput_lost_pkts:
-            for i in range(cnt):
-                print("{}\t".format(d_g['number']), file = rec_file, end = "")
-                print("{:0{}}\t".format(s, g_max_ts_digits), file = rec_file, end = "")
-                print(('\t' * 10) + d_g['status'], file = rec_file)
-                s = (s + 1) % rl['capacity']
-        else:
-            print("{}\t".format(d_g['number']), file = rec_file, end = "")
-            if s == e:
-                print("{:0{}}\t".format(s, g_max_ts_digits), file = rec_file, end = "")
-                print(('\t' * 10) + d_g['status'], file = rec_file)
-            else:
-                print("{:0{}}~{:0{}}\t".format(s, g_max_ts_digits, e, g_max_ts_digits), file = rec_file, end = "")
-                print(('\t' * 9) + d_g['status'] + '(' + str(cnt) + ')', file = rec_file)
-        return
-
-    print("{}\t".format(d_g['number']), file = rec_file, end = "")
-    print("{:0{}}\t".format(d_g['ts'], g_max_ts_digits), file = rec_file, end = "")
-
-    min_dt_s = d_g['min_sniff_time'].strftime("%Y%m%d-%H:%M:%S.%f")
-    max_dt_s = d_g['max_sniff_time'].strftime("%Y%m%d-%H:%M:%S.%f")
-    t_delta = d_g['max_sniff_time'] - d_g['min_sniff_time']
-    print(min_dt_s + "\t" + max_dt_s + "\t", file = rec_file, end = "")
-    t_delta_us = t_delta.seconds * 1000000 + t_delta.microseconds
-    print(str(t_delta_us) + "\t\t", file = rec_file, end = "")
-    print(d_g['status'] + '\t', file = rec_file, end = "")
-    if 'good' == d_g['status']:
-        g_statistics_dict['total_pkt'] += d_g['pkt_cnt_per_line']
-    else:
-        g_statistics_dict['total_pkt'] += len(d_g['pkt_no'])
-        print('-'.join(map(str, d_g['pkt_no'])) + "\t", file = rec_file, end = "")
-
-    print("", file = rec_file)
 
 def ts_is_valid(ts):
     return (0 <= ts) and (ts <= g_max_ts)
@@ -204,6 +169,7 @@ def get_a_new_cust_node(ts, tk):
     node = get_a_new_ring_link_node(ts)
     node['data'] = [] #every item is a dict returned by get_a_pkt
     node['first_sniff_time'] = tk
+    return node
 
 def set_start_ts():
     if (ts_is_valid(g_dg_ring_link['ctrl_blk']['start_ts']) or 
@@ -212,10 +178,15 @@ def set_start_ts():
         return
     first_pkt_ts = g_dg_ring_link['ctrl_blk']['first_pkt_node']['idx']
 
+    print("")
+    print("first_pkt_ts is {}".format(first_pkt_ts))
+
     ts_int_f_pkt_ts = round_sub(first_pkt_ts, g_start_ts_find_ts_int) if g_start_ts_find_ts_int > 0 else first_pkt_ts
-    while ((None == g_dg_ring_link['ctrl_blk']['indices'][ts_int_f_pkt_ts]) and (ts_int_f_pkt_ts != first_pkt_ts)):
+    print("ts_int_f_pkt_ts-0 is {}".format(ts_int_f_pkt_ts))
+    while ((not (ts_int_f_pkt_ts in g_dg_ring_link['indices'].keys())) and (ts_int_f_pkt_ts != first_pkt_ts)):
         ts_int_f_pkt_ts = round_add(ts_int_f_pkt_ts, 1)
-    ts_int_f_node = g_dg_ring_link['ctrl_blk']['indices'][ts_int_f_pkt_ts]
+    ts_int_f_node = g_dg_ring_link['indices'][ts_int_f_pkt_ts]
+    print("ts_int_f_pkt_ts-1 is {}".format(ts_int_f_pkt_ts))
 
     time_int_f_node = g_dg_ring_link['ctrl_blk']['first_pkt_node']['prev']
     if g_start_ts_find_time_int > 0:
@@ -223,37 +194,51 @@ def set_start_ts():
             (abs(time_int_f_node['first_sniff_time'] - g_dg_ring_link['ctrl_blk']['first_pkt_node']['first_sniff_time'])
                     > g_start_ts_find_time_int_delta)):
             time_int_f_node = time_int_f_node['prev']
-    time_int_f_pkt_ts = time_int_f_node['first_sniff_time']
+    time_int_f_pkt_ts = time_int_f_node['idx']
+    print("time_int_f_pkt_ts-1 is {}".format(time_int_f_pkt_ts))
 
-    if count_round_number(ts_int_f_pkt_ts, first_pkt_ts) <= count_round_number(time_int_f_pkt_ts, first_pkt_ts):
-        former_ptk_ts = ts_int_f_pkt_ts
+    if count_round_number(ts_int_f_pkt_ts, first_pkt_ts) >= count_round_number(time_int_f_pkt_ts, first_pkt_ts):
+        former_pkt_ts = ts_int_f_pkt_ts
         former_node = ts_int_f_node
     else:
-        former_ptk_ts = time_int_f_pkt_ts
+        former_pkt_ts = time_int_f_pkt_ts
         former_node = time_int_f_node
 
     g_dg_ring_link['ctrl_blk']['start_ts'] = former_pkt_ts
     g_dg_ring_link['ctrl_blk']['start_ts_node'] = former_node
 
+    print("start ts: {}".format(former_pkt_ts))
+
 def hex_digit_char_OR(c1, c2, capital = False):
     """
     c1 and c2 should be hex digtit char, e.g., '0', '1', 'a', 'B'.
-    return value v is char,  order(v) is c1 | c2. (c1 and c2 are first converted into digit and then OR)
+    return value v is char,  ord(v) is c1 | c2. (c1 and c2 are first converted into digit and then OR)
     """
     letter_a = 'A' if capital else 'a'
     letter_f = 'F' if capital else 'A'
 
-    d_c1 = ((order(c1) - order(letter_a) + 10) if (letter_a <= c1 and c1 <= letter_f) else (order(c1) - order('0')))
-    d_c2 = ((order(c2) - order(letter_a) + 10) if (letter_a <= c2 and c2 <= letter_f) else (order(c2) - order('0')))
+    d_c1 = ((ord(c1) - ord(letter_a) + 10) if (letter_a <= c1 and c1 <= letter_f) else (ord(c1) - ord('0')))
+    d_c2 = ((ord(c2) - ord(letter_a) + 10) if (letter_a <= c2 and c2 <= letter_f) else (ord(c2) - ord('0')))
     ORed_d = d_c1 | d_c2
 
     if(10 <= ORed_d and ORed_d <= 15): v_ch = chr(ORed_d - 10 + ord(letter_a))
     else: v_ch = chr(ORed_d + ord('0'))
     return v_ch
 
+def sep_hex_str(s_str, sep):
+    """
+    used for the following case:
+        input s_str = '0123', sep = ','
+        return '01,23'
+    """
+    s_len = len(s_str)
+    byte_list = [s_str[idx*2 : (idx*2)+2] for idx in range(int(s_len /2))]
+    if len(byte_list) * 2 != s_len: byte_list.append(s_str[s_len - 1])
+    return sep.join(byte_list)
+
 _g_lost_pkt_ts_arr = []
-def rec_pkt_data(ts, node, d_str, merged, rec_file):
-    #print("首包编号\t时间戳\t包数量\t合并数据\t包编号列表", file = g_pkt_rec_file)
+def rec_pkt_data(ts, node, invalid_pkt_cnt, d_str, rec_file):
+    #print("首包编号\t首包时间\t时间戳\t包数量\t有效包数量\t合并后数据\t包编号列表", file = g_pkt_rec_file)
     if (None == node) or (len(node['data']) == 0): #lost
         if g_expand_ouput_lost_pkts:
             print("{:0{}}(lost)\t".format(ts, g_max_ts_digits), file = rec_file)
@@ -268,10 +253,18 @@ def rec_pkt_data(ts, node, d_str, merged, rec_file):
             print("{:0{}}(lost)\t".format(_g_lost_pkt_ts_arr[0], g_max_ts_digits), file = rec_file)
         _g_lost_pkt_ts_arr.clear()
     first_pkt_no = node['data'][0]['number']
+    first_pkt_sniff_time_str = node['first_sniff_time'].strftime("%Y%m%d-%H:%M:%S.%f")
     pkt_ts = ts
     pkt_cnt = len(node['data'])
-    data_str = node['data'][0]['data_bytes'][0 : g_pkt_ele_pos_dict['data_bytes'][0]] + d_str
-    pkt_no_list = tuple(node['data'][i]['number'] for i in range(pkt_cnt))
+    valid_pkt_cnt = pkt_cnt - invalid_pkt_cnt
+    data_str = node['data'][0]['info']['data_bytes'][0 : g_pkt_ele_pos_dict['data_bytes'][0]] + d_str
+    sep_data_str = sep_hex_str(data_str, ' ')
+    pkt_no_list = ','.join(node['data'][i]['number'] for i in range(pkt_cnt))
+
+    print("{}\t{}\t{:0{}}\t{}\t{}\t{}\t{}"
+        .format(first_pkt_no, first_pkt_sniff_time_str, pkt_ts, g_max_ts_digits, pkt_cnt, valid_pkt_cnt, 
+                sep_data_str, pkt_no_list),
+         file = rec_file)
 
 def refresh_stat():
     if not ts_is_valid(g_dg_ring_link['ctrl_blk']['start_ts']):
@@ -283,41 +276,47 @@ def refresh_stat():
         return
 
     end_idx = round_sub(s_ts, 1)
-    while (end_idx != s_ts) and (None == g_dg_ring_link['ctrl_blk']['indices'][end_idx]):
+    while (end_idx != s_ts) and (not(end_idx in g_dg_ring_link['indices'].keys())):
         end_idx = round_sub(end_idx, 1)
 
-    dbyte_pos = g_pkt_ele_pos_dict['data_bytes'][0]
+    dbyte_pos = g_pkt_ele_pos_dict['data_bytes'][0] #not including ts
     idx = s_ts
     while True:
         merged_data = False
-        curr_node = g_dg_ring_link['ctrl_blk']['indices'][idx]
+        curr_node = g_dg_ring_link['indices'][idx] if idx in g_dg_ring_link['indices'].keys() else None
         d_str = ""
+        invalid_pkt_cnt = 0
+        discarded_pkts = dict([('should_be_len', 0), ('data', [])])
         if (None == curr_node) or (len(curr_node['data']) == 0):
             g_statistics_dict['lost_pkt'] += 1
             g_statistics_dict['total_pkt'] += 1
-        elif len(curr_node['data']) > 1: #dup pkts exists
-            merged_data = True
-            pkt_cnt = len(curr_node['data'])
-            g_statistics_dict['total_pkt'] += pkt_cnt 
-            g_statistics_dict['dup_pkt'] += pkt_cnt 
-            pkt_len = curr_node['data'][0]['info']['payload_size']
-            d_str = '0' * (pkt_len * 2)
-            for p_idx in range(pkt_cnt):
-                pkt = curr_node['data'][p_idx]
-                if pkt['info']['payload_size'] != pkt_len:
-                    g_statistics_dict['discarded_pkt(wrong_len)'] += 1
-                    g_discarded_pkt_rec_dict['pkts'].append(dict('should_be_len' = pkt_len, 
-                                                                 'len' = pkt['info']['payload_size'],
-                                                                 'data' = pkt))
-                else:
-                    #now merge data
-                    d_str = ''.join(hex_digit_char_OR(d_str[i], pkt['info']['data_btyes'][dbyte_pos][i])
-                                        for i in range(pkt_len))
-        else: #single pkt
-            g_statistics_dict['total_pkt'] += 1
-            d_str = pkt['info']['data_btyes'][dbyte_pos : dbyte_pos + pkt_len]
+        else:
+            pkt_len = curr_node['data'][0]['info']['payload_size'] * 2 - g_pkt_ele_pos_dict['ts'][1] #not including ts
+            if len(curr_node['data']) > 1: #dup pkts exists
+                merged_data = True
+                pkt_cnt = len(curr_node['data'])
+                g_statistics_dict['total_pkt'] += pkt_cnt 
+                g_statistics_dict['dup_pkt'] += pkt_cnt 
+                d_str = '0' * pkt_len
+                for p_idx in range(pkt_cnt):
+                    pkt = curr_node['data'][p_idx]
+                    if pkt['info']['payload_size'] * 2 != (pkt_len + g_pkt_ele_pos_dict['ts'][1]):
+                        g_statistics_dict['discarded_pkt(wrong_len)'] += 1
+                        discarded_pkts['data'].append(pkt)
+                        invalid_pkt_cnt += 1
+                    else:
+                        #now merge data
+                        d_str = ''.join(hex_digit_char_OR(d_str[i], pkt['info']['data_bytes'][dbyte_pos + i])
+                                            for i in range(pkt_len))
+                if len(discarded_pkts['data']) > 0:
+                    discarded_pkts['should_be_len'] = pkt_len
+                    g_discarded_pkt_rec_dict['pkts'].append(discarded_pkts)
+            else: #single pkt
+                pkt = curr_node['data'][0]
+                d_str = pkt['info']['data_bytes'][dbyte_pos : dbyte_pos + pkt_len]
+                g_statistics_dict['total_pkt'] += 1
 
-        rec_pkt_data(idx, curr_node, d_str, merged_data, g_pkt_rec_file)
+        rec_pkt_data(idx, curr_node, invalid_pkt_cnt, d_str, g_pkt_rec_file)
         del_node_from_ring_link(g_dg_ring_link, curr_node)
 
         idx = round_add(idx, 1)
@@ -327,12 +326,12 @@ def refresh_stat():
 
 try:
     g_pkt_rec_file = open(g_output_file_name, "w")
-    print("首包编号\t时间戳\t包数量\t合并数据\t包编号列表", file = g_pkt_rec_file)
+    print("首包编号\t首包时间\t时间戳\t包数量\t有效包数量\t合并后数据\t包编号列表", file = g_pkt_rec_file)
 except IOError:
     print("Open output file " + g_output_file_name + " error.")
     sys.exit(-1)
 
-g_captured_pkts = pyshark.FileCapture(g_pacp_file_name, keep_packets = False)
+g_captured_pkts = pyshark.FileCapture(g_pacp_file_name, display_filter = g_pacp_display_filter, keep_packets = False)
 
 g_start_dt = datetime.datetime.now()
 print(g_start_dt.strftime("%Y%m%d-%H:%M:%S.%f") + " start process")
@@ -340,36 +339,41 @@ print("\nprocessing...\n")
 
 g_dg_ring_link = init_ring_link(g_max_ts + 1)
 g_dg_ring_link['ctrl_blk'] = dict(
-        'start_ts' = g_expect_start_ts, 
-        'start_ts_node' = None,
-        'first_pkt_time' = 0,
-        'first_pkt_node' = None,
+        [('start_ts', g_expect_start_ts),
+        ('start_ts_node', None),
+        ('first_pkt_time', 0),
+        ('first_pkt_node', None)]
         )
 
 g_is_first_pkt = True
 while True:
-    ret = get_a_pkt(g_captured_pkts)
-    if not(ret['ret']):
+    pkt = get_a_pkt(g_captured_pkts)
+    if not(pkt['ret']):
         print("\nNo more pkts.\n")
         break
 
-    sniff_t = ret['sniff_time']
+    sniff_t = pkt['sniff_time']
     sniff_t_str = sniff_t.strftime("%Y%m%d-%H:%M:%S.%f")
-    ts = ret['info']['ts']
+    ts = pkt['info']['ts']
+
     if g_is_first_pkt:
         g_dg_ring_link['ctrl_blk']['first_pkt_time'] = sniff_t
-        g_dg_ring_link['ctrl_blk']['first_pkt_node'] = node
-        g_is_first_pkt = False
 
-    if ts not in g_dg_ring_link['indices'].keys():
+    #check ts overload
+    if (g_ts_overload_period > 0) \
+                and (sniff_t - g_dg_ring_link['ctrl_blk']['first_pkt_time'] > g_ts_overload_period_delta):
+        refresh_stat()
+
+    if not (ts in g_dg_ring_link['indices'].keys()):
         node = get_a_new_cust_node(ts, sniff_t)
+        insert_node_into_ring_link(g_dg_ring_link, node)
     else:
         node = g_dg_ring_link['indices'][ts]
-    if (g_ts_overload_period > 0) and (sniff_t - node['first_sniff_time'] > g_ts_overload_period_delta):
-        #should check ts overload
-        refresh_stat()
-    else:
-        node['data'].append(ret)
+
+    node['data'].append(pkt)
+    if g_is_first_pkt:
+        g_dg_ring_link['ctrl_blk']['first_pkt_node'] = node
+        g_is_first_pkt = False
 
 refresh_stat()
 
@@ -388,5 +392,27 @@ print("\n\n(" + g_app_name + " " + g_version + ")", file = g_pkt_rec_file)
 print("\n\n(" + g_app_name + " " + g_version + ")")
 
 g_pkt_rec_file.close()
+
+if len(g_discarded_pkt_rec_dict['pkts']) > 0:
+    disc_pkt_rec_f = open(g_discarded_pkt_rec_dict['fn'], "w")
+    if(None == disc_pkt_rec_f):
+        print("\n\nthere are some discared pkts, but open {} error, so output the contens to screen only...".
+                format(g_discarded_pkt_rec_dict['fn']))
+        disc_pkt_rec_f = sys.stdout
+
+    #'header' : "|No.|ts|sniff_time|len|should_be_len|data|",
+    print(g_discarded_pkt_rec_dict['header'], file = disc_pkt_rec_f)
+    for pkt_list in g_discarded_pkt_rec_dict['pkts']:
+        should_be_len = pkt_list['should_be_len']
+        for pkt in pkt_list['data']:
+            sn_time_str = pkt['sniff_time'].strftime("%Y%m%d-%H:%M:%S.%f")
+            pkt_len = pkt['info']['payload_size'] - g_pkt_ele_pos_dict['ts'][1] #not including ts
+            data_str = sep_hex_str(pkt['info']['data_bytes'], ' ')
+            print("|{}|{:0{}}|{}|{}|{}|{}|".format(pkt['number'], pkt['info']['ts'], g_max_ts_digits,
+                                                  sn_time_str, pkt_len, should_be_len, data_str),
+                  file = disc_pkt_rec_f)
+        print("", file = disc_pkt_rec_f)
+
+    if(not(disc_pkt_rec_f is sys.stdout)): disc_pkt_rec_f.close()
 
 print("\nFinished. Please check the result file: " + g_output_file_name)

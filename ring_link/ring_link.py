@@ -118,6 +118,8 @@ def del_node_from_ring_link(handler, node):
         node: the node to be deleted.
         release_node: del the node if True.
     """
+    if(None == node): return
+
     node['prev']['next'] = node['next']
     node['next']['prev'] = node['prev']
     handler['cnt'] -= 1

@@ -24,6 +24,7 @@ E.g, if "capacity" is 8, indices of nodes in a full link is "0->1->2->3->4->5->6
 is 1).
 """
 _g_def_round_len = 65536
+_g_round_len = _g_def_round_len
 def init_ring_link(capacity = _g_def_round_len):
     """
     Input:
@@ -41,6 +42,8 @@ def init_ring_link(capacity = _g_def_round_len):
     hdlr['cnt'] = 0
     hdlr['indices'] = dict()
     hdlr['ctrl_blk'] = None
+
+    _g_round_len = capacity
     return hdlr
 
 def get_a_new_ring_link_node(idx = 0):
@@ -127,7 +130,7 @@ def del_node_from_ring_link(handler, node):
     node['next'] = node['prev'] = node
     del handler['indices'][node['idx']]
 
-def in_round_range(n, s, e, round_len = _g_def_round_len, s_inc = False, e_inc = False):
+def in_round_range(n, s, e, round_len = _g_round_len, s_inc = False, e_inc = False):
     def lte(a, b, inc): return (a <= b) if inc else a < b
     def gte(a, b, inc): return a >= b if inc else a > b
 
@@ -135,9 +138,22 @@ def in_round_range(n, s, e, round_len = _g_def_round_len, s_inc = False, e_inc =
             ((lte(s, n, s_inc) and lte(n, round_len - 1, True)) or \
             (lte(0, n, True) and lte(n, e, e_inc)))
 
-def count_round_number(s, e, round_len = _g_def_round_len, e_inc = True):
+def count_round_number(s, e, round_len = _g_round_len, e_inc = True):
     extra = 1 if e_inc else 0
     return (e - s + extra) if s <= e else (round_len - s + e + extra)
+
+def round_sub(s, cnt, round_len = _g_round_len):
+    """
+    return s - cnt, in round mode.
+    """
+    if s - cnt >= 0: return (s - cnt)
+    return (s + (round_len - cnt)) % round_len
+
+def round_add(s, cnt,  round_len = _g_round_len):
+    """
+    return s + cnt, in round mode.
+    """
+    return (s + cnt) % round_len
 
 def insert_node_into_ring_link(handler, node, mode = 'skip'):
     """

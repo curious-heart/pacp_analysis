@@ -167,14 +167,14 @@ g_statistics_dict = \
 {
     'total_pkt' : 0,
     'dup_pkt' : 0,
-    'discarded_pkt(wrong-len)' : 0,
+    'discarded_pkt(wrong_len)' : 0,
     'lost_pkt' : 0
 }
 g_discarded_pkt_rec_dict = \
 {
     'fn' : g_discarded_pkt_rec_file_name,
     'header' : "|No.|ts|pkt_no|sniff_time|",
-    'pkts' : [] #every item is a dict: {'should_be_len': 0, 'data': []}
+    'pkts' : [] #every item is a dict: {'should_be_len': 0, 'len': 0, 'data': []}
 }
 
 def count_a_new_dg(pkt_info):
@@ -298,13 +298,76 @@ def get_a_new_cust_node(ts, tk):
     node['data'] = [] #every item is a dict returned by get_a_pkt
     node['first_sniff_time'] = tk
 
-def find_start_ts():
-    pass
+def set_start_ts():
+    if (ts_is_valid(g_dg_ring_link['ctrl_blk']['start_ts']) or 
+       (None == g_dg_ring_link['ctrl_blk']['first_pkt_node']) or
+       (len(g_dg_ring_link['ctrl_blk']['first_pkt_node']['data']) <= 0)):
+        return
+    first_pkt_ts = g_dg_ring_link['ctrl_blk']['first_pkt_node']['first_sniff_time']
+
+    ts_int_f_pkt_ts = round_sub(first_pkt_ts, g_start_ts_find_ts_int) if g_start_ts_find_ts_int > 0 else first_pkt_ts
+    while ((None == g_dg_ring_link['ctrl_blk']['indices'][ts_int_f_pkt_ts]) and (ts_int_f_pkt_ts != first_pkt_ts)):
+        ts_int_f_pkt_ts = round_add(ts_int_f_pkt_ts, 1)
+    ts_int_f_node = g_dg_ring_link['ctrl_blk']['indices'][ts_int_f_pkt_ts]
+
+    time_int_f_node = g_dg_ring_link['ctrl_blk']['first_pkt_node']['prev']
+    if g_start_ts_find_time_int > 0:
+        while ((time_int_f_node != g_dg_ring_link['ctrl_blk']['first_pkt_node']) and 
+            (abs(time_int_f_node['first_sniff_time'] - g_dg_ring_link['ctrl_blk']['first_pkt_node']['first_sniff_time'])
+                    > g_start_ts_find_time_int_delta)):
+            time_int_f_node = time_int_f_node['prev']
+    time_int_f_pkt_ts = time_int_f_node['first_sniff_time']
+
+    if count_round_number(ts_int_f_pkt_ts, first_pkt_ts) <= count_round_number(time_int_f_pkt_ts, first_pkt_ts):
+        former_ptk_ts = ts_int_f_pkt_ts
+        former_node = ts_int_f_node
+    else:
+        former_ptk_ts = time_int_f_pkt_ts
+        former_node = time_int_f_node
+
+    g_dg_ring_link['ctrl_blk']['start_ts'] = former_pkt_ts
+    g_dg_ring_link['ctrl_blk']['start_ts_node'] = former_node
 
 def refresh_stat():
-    if g_dg_ring_link['ctrl_blk']['start_ts_node'] == None:
-        find_start_ts()
-    pass
+    if not ts_is_valid(g_dg_ring_link['ctrl_blk']['start_ts']):
+        set_start_ts()
+
+    s_ts = g_dg_ring_link['ctrl_blk']['start_ts']
+    if not ts_is_valid(s_ts):
+        print("\n\nError: start ts {} is not invalid!!!\n\n".format(s_ts))
+        return
+
+    end_idx = round_sub(s_ts, 1)
+    while (end_idx != s_ts) and (None == g_dg_ring_link['ctrl_blk']['indices'][end_idx]):
+        end_idx = round_sub(end_idx, 1)
+
+    idx = s_ts
+    while True:
+        curr_node = g_dg_ring_link['ctrl_blk']['indices'][idx]
+        if (None == curr_node) or (len(curr_node['data']) == 0):
+            g_statistics_dict['lost_pkt'] += 1
+            g_statistics_dict['total_pkt'] += 1
+        elif len(curr_node['data']) > 1: #dup pkts exists
+            pkt_cnt = len(curr_node['data'])
+            g_statistics_dict['total_pkt'] += pkt_cnt 
+            g_statistics_dict['dup_pkt'] += pkt_cnt 
+            pkt_len = curr_node['data'][0]['info']['data_bytes']
+            for p_idx in range(pkt_cnt):
+                pkt = curr_node['data'][p_idx]
+                if pkt['info']['data_bytes'] != pkt_len:
+                    g_statistics_dict['discarded_pkt(wrong_len)'] += 1
+                    g_discarded_pkt_rec_dict['pkts'].append(dict('should_be_len' = pkt_len, 
+                                                                 'len' = pkt['info']['data_bytes'],
+                                                                 'data' = pkt))
+                    continue
+
+
+        else: #single pkt
+            g_statistics_dict['total_pkt'] += 1
+
+        idx = round_add(idx, 1)
+        if round_add(end_idx, 1) == idx:
+            break
 ####################################################################################################
 
 try:
@@ -362,7 +425,7 @@ while True:
         curr_node['data'] = new_dg
         ins_ret = insert_node_into_ring_link(g_dg_ring_link, curr_node)
         if ins_ret != 'normal':
-            g_statistics_dict['discarded_pkt(wrong-len)'] += 1
+            g_statistics_dict['discarded_pkt(wrong_len)'] += 1
             print("No. {}: discared due to ring link full: ts-{}, pkt_no-{}, time-{}".format(ret['number'], 
                 ts, ret['info']['pkt_no'], sniff_t_str))
             #continue

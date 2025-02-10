@@ -116,7 +116,6 @@ def del_node_from_ring_link(handler, node):
     Input:
         handler: the ring link handler returned from init_a_ring_link.
         node: the node to be deleted.
-        release_node: del the node if True.
     """
     if(None == node): return
 

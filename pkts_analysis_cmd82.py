@@ -6,7 +6,7 @@ import os
 import argparse
 from ring_link.ring_link import *
 
-g_version = '1.00.00'
+g_version = '1.01.00'
 g_app_name = os.path.basename(__file__).split('.')[0]
 
 """
@@ -24,8 +24,6 @@ g_start_ts_find_time_int_key = 'start_ts_find_time_int'
 g_def_start_ts_find_time_int = 10 #sec
 g_start_ts_find_ts_int_key = 'start_ts_find_ts_int'
 g_def_start_ts_find_ts_int = 10 # #
-g_start_ts_find_ts_count_key = 'start_ts_find_ts_count'
-g_def_start_ts_find_ts_count = 10 # #
 g_ts_overload_period_key = 'ts_overload_p_s'
 g_def_ts_overload_period_s = -1
 g_discarded_pkt_rec_file_opt_key = 'discarded_pkt_file'
@@ -36,9 +34,15 @@ g_def_max_ts = 65535
 g_dup_pkt_rec_file_opt_key = 'dup_pkt_file'
 g_def_dup_pkt_rec_file_name = "duplicate_pkts.txt"
 
-g_expand_output_log_dgs_key = 'expand_lost_pkts'
 g_min_valid_pkt_len_key = 'min_valid_pkt_len'
 g_def_min_valid_pkt_len = 58
+
+g_expand_output_log_dgs_key = 'expand_lost_pkts'
+
+g_display_from_1st_pkt_key = "display_from_1st_pkt"
+
+g_flush_cnt_key = 'flush_cnt'
+g_def_flush_cnt = 100 * 15
 
 parser = argparse.ArgumentParser(prog = g_app_name)
 parser.add_argument(g_pacp_file_opt_key, default = "", help = "pacp file name")
@@ -52,13 +56,11 @@ parser.add_argument('--' + g_start_ts_find_time_int_key, default = g_def_start_t
 parser.add_argument('--' + g_start_ts_find_ts_int_key, default = g_def_start_ts_find_ts_int, type = int,
         help = "timestamp interval. used to find the the 'round-minimum' ts before the 1st sniffed pkt."
                "only valid if --{} is not assigned.".format(g_expect_start_ts_key))
-parser.add_argument('--' + g_start_ts_find_ts_count_key, default = g_def_start_ts_find_ts_count, type = int,
-        help = "timestamp count. used to find the the 'round-minimum' ts before the 1st sniffed pkt."
-               "only valid if --{} is not assigned.".format(g_expect_start_ts_key))
 parser.add_argument('--' + g_ts_overload_period_key, default = g_def_ts_overload_period_s, type = float,
-        help = "a time duration in seconds, in which we think all timestamp are not overload.")
+        help = "a time duration in seconds, in which we think all timestamp are not overload. "
+           "if it is less than 0, all ts are taken as not overload. default as {}.".format(g_def_ts_overload_period_s))
 parser.add_argument('--' + g_discarded_pkt_rec_file_opt_key, default = g_def_discarded_pkt_rec_file_name,
-        help = "file to record discared pkt(rb-full) info. default as {}".format(g_def_discarded_pkt_rec_file_name))
+        help = "file to record discared pkt(wrong len) info. default as {}".format(g_def_discarded_pkt_rec_file_name))
 parser.add_argument('--' + g_max_ts_key, default = g_def_max_ts, type = int,
                 help = "the max timestamp value. valid value is considered between [0, max_ts_key]."
                        "deault as {}".format(g_def_max_ts))
@@ -72,6 +74,13 @@ parser.add_argument('--' + g_min_valid_pkt_len_key, default = g_def_min_valid_pk
 parser.add_argument('--' + g_expand_output_log_dgs_key, dest = g_expand_output_log_dgs_key, action = 'store_true',
         help = "expand lost dgs or not. if not expand, output is as 's~e lost' in one line;"
                " otherwise, each lost dg in one line")
+parser.add_argument('--' + g_display_from_1st_pkt_key, dest = g_display_from_1st_pkt_key, action = 'store_true',
+        help = "display result keys from the 1st pkt in pcapng file. by default, display from the pkt with start ts.")
+
+parser.add_argument('--' + g_flush_cnt_key, default = g_def_flush_cnt, type = int,
+        help = "assign an int number. output file is flushed every that number of dgs are processed."
+               "increase this number may decrease process time but require more memory."
+               " default as {}".format(g_def_flush_cnt))
 
 cmd_args = vars(parser.parse_args())
 g_pacp_file_name = cmd_args[g_pacp_file_opt_key]
@@ -81,7 +90,6 @@ g_start_ts_find_time_int = cmd_args[g_start_ts_find_time_int_key]
 g_start_ts_find_time_int_delta = timedelta(0, 0, g_start_ts_find_time_int * 1000) \
                                     if g_start_ts_find_time_int > 0 else timedelta(0, 0, 0)
 g_start_ts_find_ts_int = cmd_args[g_start_ts_find_ts_int_key]
-g_start_ts_find_ts_count = cmd_args[g_start_ts_find_ts_count_key]
 g_ts_overload_period = cmd_args[g_ts_overload_period_key]
 g_ts_overload_period_delta = timedelta(0, 0, g_ts_overload_period * 1000) \
                                     if g_ts_overload_period > 0 else timedelta(0, 0, 0)
@@ -90,8 +98,28 @@ g_max_ts = cmd_args[g_max_ts_key]
 g_max_ts_digits = len(str(g_max_ts))
 
 g_dup_pkt_rec_file_name = cmd_args[g_dup_pkt_rec_file_opt_key]
-g_expand_ouput_lost_pkts = cmd_args[g_expand_output_log_dgs_key]
 g_min_valid_pkt_len = cmd_args[g_min_valid_pkt_len_key]
+
+g_expand_ouput_lost_pkts = cmd_args[g_expand_output_log_dgs_key]
+g_display_from_1st_pkt = cmd_args[g_display_from_1st_pkt_key]
+
+g_flush_cnt = cmd_args[g_flush_cnt_key]
+
+def print_time_point(tp, prompt = "", end_str = "", endl = "\n", tgt = [sys.stdout]):
+    o_str = "{}{}{}".format(prompt, tp.strftime("%Y%m%d-%H:%M:%S.%f"), end_str)
+    for o_f in tgt:
+        print(o_str, end = endl, file = o_f)
+
+def print_time_dura(td, prompt = "", end_str = "", endl = "\n", tgt = [sys.stdout]):
+    dura_str = "{}{} days, {} seconds, {} us{}".format(prompt, td.days, td.seconds, td.microseconds, end_str)
+    for o_file in tgt:
+        print(dura_str, end = endl, file = o_file)
+
+def print_elapsed_time(s, e, prompt = "time elapsed: ", end_str = "", endl = "\n", tgt = [sys.stdout]):
+    dura = e - s
+    elapsed_str = "{}{} days, {} seconds, {} us{}".format(prompt, dura.days, dura.seconds, dura.microseconds, end_str)
+    for o_file in tgt:
+        print(elapsed_str, end = endl, file = o_file)
 
 print('{} is: {}'.format(g_pacp_file_opt_key, g_pacp_file_name))
 print('{} is: {}'.format(g_output_file_opt_key, g_output_file_name))
@@ -121,6 +149,10 @@ for k in g_pkt_ele_pos_dict.keys():
 
 print(g_pkt_ele_pos_dict)
 print("")
+
+g_start_dt = datetime.datetime.now()
+print_time_point(g_start_dt, "",  " start process")
+print("\nprocessing...\n")
 
 g_cmd_bytes_str = "82"
 def get_a_pkt(cap): 
@@ -163,7 +195,7 @@ g_discarded_pkt_rec_dict = \
 }
 
 def ts_is_valid(ts):
-    return (0 <= ts) and (ts <= g_max_ts)
+    return (0 <= ts) and (ts <= g_dg_ring_link['capacity'] - 1)
 
 def get_a_new_cust_node(ts, tk):
     node = get_a_new_ring_link_node(ts)
@@ -182,11 +214,10 @@ def set_start_ts():
     print("first_pkt_ts is {}".format(first_pkt_ts))
 
     ts_int_f_pkt_ts = round_sub(first_pkt_ts, g_start_ts_find_ts_int) if g_start_ts_find_ts_int > 0 else first_pkt_ts
-    print("ts_int_f_pkt_ts-0 is {}".format(ts_int_f_pkt_ts))
     while ((not (ts_int_f_pkt_ts in g_dg_ring_link['indices'].keys())) and (ts_int_f_pkt_ts != first_pkt_ts)):
         ts_int_f_pkt_ts = round_add(ts_int_f_pkt_ts, 1)
     ts_int_f_node = g_dg_ring_link['indices'][ts_int_f_pkt_ts]
-    print("ts_int_f_pkt_ts-1 is {}".format(ts_int_f_pkt_ts))
+    print("ts_int_f_pkt_ts is {}".format(ts_int_f_pkt_ts))
 
     time_int_f_node = g_dg_ring_link['ctrl_blk']['first_pkt_node']['prev']
     if g_start_ts_find_time_int > 0:
@@ -195,7 +226,7 @@ def set_start_ts():
                     > g_start_ts_find_time_int_delta)):
             time_int_f_node = time_int_f_node['prev']
     time_int_f_pkt_ts = time_int_f_node['idx']
-    print("time_int_f_pkt_ts-1 is {}".format(time_int_f_pkt_ts))
+    print("time_int_f_pkt_ts is {}".format(time_int_f_pkt_ts))
 
     if count_round_number(ts_int_f_pkt_ts, first_pkt_ts) >= count_round_number(time_int_f_pkt_ts, first_pkt_ts):
         former_pkt_ts = ts_int_f_pkt_ts
@@ -207,7 +238,6 @@ def set_start_ts():
     g_dg_ring_link['ctrl_blk']['start_ts'] = former_pkt_ts
     g_dg_ring_link['ctrl_blk']['start_ts_node'] = former_node
 
-    print("start ts: {}".format(former_pkt_ts))
 
 def hex_digit_char_OR(c1, c2, capital = False):
     """
@@ -237,6 +267,7 @@ def sep_hex_str(s_str, sep):
     return sep.join(byte_list)
 
 _g_lost_pkt_ts_arr = []
+_g_cnt_idx = 0
 def rec_pkt_data(ts, node, invalid_pkt_cnt, d_str, rec_file):
     #print("首包编号\t首包时间\t时间戳\t包数量\t有效包数量\t合并后数据\t包编号列表", file = g_pkt_rec_file)
     if (None == node) or (len(node['data']) == 0): #lost
@@ -265,25 +296,58 @@ def rec_pkt_data(ts, node, invalid_pkt_cnt, d_str, rec_file):
         .format(first_pkt_no, first_pkt_sniff_time_str, pkt_ts, g_max_ts_digits, pkt_cnt, valid_pkt_cnt, 
                 sep_data_str, pkt_no_list),
          file = rec_file)
+    _g_cnt_idx += 1
+    if _g_cnt_idx >= g_flush_cnt:
+        g_data_group_file.flush()
+        if g_pkt_info_file_name != "":
+            g_pkt_info_file.flush()
+        _g_cnt_idx = 0
 
+_g_refresh_stat_point = 0
 def refresh_stat():
+    refresh_point_dt = datetime.datetime.now()
+    print_time_point(refresh_point_dt, "\trefresh point {}: ".format(_g_refresh_stat_point))
+    print_elapsed_time(g_start_dt, refresh_point_dt, "\t\ttime elapsed: ")
+
+    if g_dg_ring_link['cnt'] <= 0:
+        print("\n\nNo valid pkt exist.!\n\n")
+        g_dg_ring_link['ctrl_blk']['ts_in_capt_ord'].clear()
+        return
+
     if not ts_is_valid(g_dg_ring_link['ctrl_blk']['start_ts']):
         set_start_ts()
+
+    print("\nstart ts: {}\n".format(g_dg_ring_link['ctrl_blk']['start_ts']))
 
     s_ts = g_dg_ring_link['ctrl_blk']['start_ts']
     if not ts_is_valid(s_ts):
         print("\n\nError: start ts {} is not invalid!!!\n\n".format(s_ts))
+        g_dg_ring_link['ctrl_blk']['ts_in_capt_ord'].clear()
         return
 
+    start_idx = s_ts
     end_idx = round_sub(s_ts, 1)
     while (end_idx != s_ts) and (not(end_idx in g_dg_ring_link['indices'].keys())):
         end_idx = round_sub(end_idx, 1)
 
+    if g_display_from_1st_pkt:
+        capt_idx = 0
+        display_curr_idx = g_dg_ring_link['ctrl_blk']['ts_in_capt_ord'][capt_idx]
+        display_end_idx = round_sub(display_curr_idx, 1)
+        idx_flag_marks = [i for i in range(g_dg_ring_link['capacity'])]
+    else:
+        display_curr_idx = start_idx
+        display_end_idx = end_idx
+
     dbyte_pos = g_pkt_ele_pos_dict['data_bytes'][0] #not including ts
-    idx = s_ts
     while True:
+        if not in_round_range(display_curr_idx, start_idx, end_idx, g_dg_ring_link['capacity'], True, True):
+            display_curr_idx = round_add(display_curr_idx, 1)
+            continue
+
         merged_data = False
-        curr_node = g_dg_ring_link['indices'][idx] if idx in g_dg_ring_link['indices'].keys() else None
+        curr_node = g_dg_ring_link['indices'][display_curr_idx] if display_curr_idx in g_dg_ring_link['indices'].keys()\
+                                                                else None
         d_str = ""
         invalid_pkt_cnt = 0
         discarded_pkts = dict([('should_be_len', 0), ('data', [])])
@@ -316,12 +380,23 @@ def refresh_stat():
                 d_str = pkt['info']['data_bytes'][dbyte_pos : dbyte_pos + pkt_len]
                 g_statistics_dict['total_pkt'] += 1
 
-        rec_pkt_data(idx, curr_node, invalid_pkt_cnt, d_str, g_pkt_rec_file)
+        rec_pkt_data(display_curr_idx, curr_node, invalid_pkt_cnt, d_str, g_pkt_rec_file)
         del_node_from_ring_link(g_dg_ring_link, curr_node)
 
-        idx = round_add(idx, 1)
-        if round_add(end_idx, 1) == idx:
-            break
+        if g_display_from_1st_pkt:
+            if display_curr_idx in idx_flag_marks: del idx_flag_marks[display_curr_idx]
+            if len(idx_flag_marks) == 0: break
+            capt_idx += 1
+            next_d_idx = round_add(display_curr_idx ,1)
+            while ((next_d_idx in g_dg_ring_link['indices']) and 
+                        (next_d_idx != g_dg_ring_link['ctrl_blk']['ts_in_capt_ord'][capt_idx])):
+                next_d_idx = round_add(display_curr_idx ,1)
+            display_curr_idx = next_d_idx 
+        else:
+            if display_end_idx == display_curr_idx: break
+            display_curr_idx = round_add(display_curr_idx, 1)
+
+    g_dg_ring_link['ctrl_blk']['ts_in_capt_ord'].clear()
 ####################################################################################################
 
 try:
@@ -333,16 +408,16 @@ except IOError:
 
 g_captured_pkts = pyshark.FileCapture(g_pacp_file_name, display_filter = g_pacp_display_filter, keep_packets = False)
 
-g_start_dt = datetime.datetime.now()
-print(g_start_dt.strftime("%Y%m%d-%H:%M:%S.%f") + " start process")
-print("\nprocessing...\n")
 
 g_dg_ring_link = init_ring_link(g_max_ts + 1)
 g_dg_ring_link['ctrl_blk'] = dict(
-        [('start_ts', g_expect_start_ts),
-        ('start_ts_node', None),
-        ('first_pkt_time', 0),
-        ('first_pkt_node', None)]
+        [
+            ('start_ts', g_expect_start_ts),
+            ('start_ts_node', None),
+            ('first_pkt_time', 0),
+            ('first_pkt_node', None),
+            ('ts_in_capt_ord', [])
+        ]
         )
 
 g_is_first_pkt = True
@@ -355,6 +430,8 @@ while True:
     sniff_t = pkt['sniff_time']
     sniff_t_str = sniff_t.strftime("%Y%m%d-%H:%M:%S.%f")
     ts = pkt['info']['ts']
+    g_dg_ring_link['ctrl_blk']['ts_in_capt_ord'].append(ts)
+
 
     if g_is_first_pkt:
         g_dg_ring_link['ctrl_blk']['first_pkt_time'] = sniff_t
@@ -383,11 +460,8 @@ for k, v in g_statistics_dict.items():
     print(k + ": " + str(v), file = g_pkt_rec_file)
 
 g_end_dt = datetime.datetime.now()
-print(g_end_dt.strftime("\n%Y%m%d-%H:%M:%S.%f") + " end process.")
-g_used_time_dura = g_end_dt - g_start_dt
-time_elapsed_str = "time elapsed: {} days, {} seconds, {} us".format(g_used_time_dura.days, g_used_time_dura.seconds,  g_used_time_dura.microseconds)
-print("\n" + time_elapsed_str, file = g_pkt_rec_file)
-print("\n" + time_elapsed_str)
+print_time_point(g_end_dt, "\n", " end process.")
+print_elapsed_time(g_start_dt, g_end_dt, "\ntime elapsed: ", "", tgt = [g_pkt_rec_file, sys.stdout])
 print("\n\n(" + g_app_name + " " + g_version + ")", file = g_pkt_rec_file)
 print("\n\n(" + g_app_name + " " + g_version + ")")
 

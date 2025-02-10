@@ -269,6 +269,8 @@ def sep_hex_str(s_str, sep):
 _g_lost_pkt_ts_arr = []
 _g_cnt_idx = 0
 def rec_pkt_data(ts, node, invalid_pkt_cnt, d_str, rec_file):
+    global _g_lost_pkt_ts_arr
+    global _g_cnt_idx 
     #print("首包编号\t首包时间\t时间戳\t包数量\t有效包数量\t合并后数据\t包编号列表", file = g_pkt_rec_file)
     if (None == node) or (len(node['data']) == 0): #lost
         if g_expand_ouput_lost_pkts:
@@ -298,16 +300,16 @@ def rec_pkt_data(ts, node, invalid_pkt_cnt, d_str, rec_file):
          file = rec_file)
     _g_cnt_idx += 1
     if _g_cnt_idx >= g_flush_cnt:
-        g_data_group_file.flush()
-        if g_pkt_info_file_name != "":
-            g_pkt_info_file.flush()
+        rec_file.flush()
         _g_cnt_idx = 0
 
 _g_refresh_stat_point = 0
 def refresh_stat():
+    global _g_refresh_stat_point
     refresh_point_dt = datetime.datetime.now()
     print_time_point(refresh_point_dt, "\trefresh point {}: ".format(_g_refresh_stat_point))
     print_elapsed_time(g_start_dt, refresh_point_dt, "\t\ttime elapsed: ")
+    _g_refresh_stat_point += 1
 
     if g_dg_ring_link['cnt'] <= 0:
         print("\n\nNo valid pkt exist.!\n\n")
@@ -334,7 +336,7 @@ def refresh_stat():
         capt_idx = 0
         display_curr_idx = g_dg_ring_link['ctrl_blk']['ts_in_capt_ord'][capt_idx]
         display_end_idx = round_sub(display_curr_idx, 1)
-        idx_flag_marks = [i for i in range(g_dg_ring_link['capacity'])]
+        idx_flag_marks = dict([(i, i) for i in range(g_dg_ring_link['capacity'])])
     else:
         display_curr_idx = start_idx
         display_end_idx = end_idx
@@ -384,14 +386,19 @@ def refresh_stat():
         del_node_from_ring_link(g_dg_ring_link, curr_node)
 
         if g_display_from_1st_pkt:
-            if display_curr_idx in idx_flag_marks: del idx_flag_marks[display_curr_idx]
-            if len(idx_flag_marks) == 0: break
+            if display_curr_idx in idx_flag_marks.keys(): del idx_flag_marks[display_curr_idx]
+
             capt_idx += 1
-            next_d_idx = round_add(display_curr_idx ,1)
-            while ((next_d_idx in g_dg_ring_link['indices']) and 
-                        (next_d_idx != g_dg_ring_link['ctrl_blk']['ts_in_capt_ord'][capt_idx])):
-                next_d_idx = round_add(display_curr_idx ,1)
-            display_curr_idx = next_d_idx 
+            if capt_idx >= len(g_dg_ring_link['ctrl_blk']['ts_in_capt_ord']):
+                #all pkts in pcapng and neighbouring lost pkt are processed. process the remaings.
+                for rem_idx in idx_flag_marks.keys():
+                    if in_round_range(rem_idx, start_idx, end_idx, g_dg_ring_link['capacity'], True, True):
+                        g_statistics_dict['lost_pkt'] += 1
+                        g_statistics_dict['total_pkt'] += 1
+                        rec_pkt_data(rem_idx, None, 0, "", g_pkt_rec_file)
+                break
+            else:
+                display_curr_idx = g_dg_ring_link['ctrl_blk']['ts_in_capt_ord'][capt_idx]
         else:
             if display_end_idx == display_curr_idx: break
             display_curr_idx = round_add(display_curr_idx, 1)
@@ -430,7 +437,8 @@ while True:
     sniff_t = pkt['sniff_time']
     sniff_t_str = sniff_t.strftime("%Y%m%d-%H:%M:%S.%f")
     ts = pkt['info']['ts']
-    g_dg_ring_link['ctrl_blk']['ts_in_capt_ord'].append(ts)
+    if not(ts in g_dg_ring_link['ctrl_blk']['ts_in_capt_ord']): 
+        g_dg_ring_link['ctrl_blk']['ts_in_capt_ord'].append(ts)
 
 
     if g_is_first_pkt:

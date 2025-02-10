@@ -268,23 +268,44 @@ def sep_hex_str(s_str, sep):
 
 _g_lost_pkt_ts_arr = []
 _g_cnt_idx = 0
-def rec_pkt_data(ts, node, invalid_pkt_cnt, d_str, rec_file):
+def rec_pkt_data(ts = -1, node = None, invalid_pkt_cnt = 0, d_str = "", rec_file = sys.stdout, flush_lost_pkts = False):
     global _g_lost_pkt_ts_arr
     global _g_cnt_idx 
+
     #print("首包编号\t首包时间\t时间戳\t包数量\t有效包数量\t合并后数据\t包编号列表", file = g_pkt_rec_file)
+
+    def flush_lost_ts_arr():
+        global _g_lost_pkt_ts_arr
+        if len(_g_lost_pkt_ts_arr) == 0: return
+        curr_i = 0
+        while curr_i < len(_g_lost_pkt_ts_arr):
+            curr_s = _g_lost_pkt_ts_arr[curr_i]
+            tmp_i = 0
+            while ((curr_i + tmp_i < len(_g_lost_pkt_ts_arr))
+                    and (curr_s + tmp_i == _g_lost_pkt_ts_arr[curr_i + tmp_i])): tmp_i += 1
+            curr_e = _g_lost_pkt_ts_arr[curr_i + tmp_i - 1]
+            print("n.a.\tn.a.\t", file = rec_file, end = "")
+            if curr_e == curr_s:
+                print("{:0{}}(lost)".format(curr_s, g_max_ts_digits), file = rec_file)
+            else: 
+                print("{:0{}} ~ {:0{}}(lost)".format(curr_s, g_max_ts_digits, 
+                                                     curr_e, g_max_ts_digits), file = rec_file)
+            curr_i += tmp_i
+        _g_lost_pkt_ts_arr.clear()
+
+    if flush_lost_pkts:
+        flush_lost_ts_arr()
+        return
+
     if (None == node) or (len(node['data']) == 0): #lost
         if g_expand_ouput_lost_pkts:
             print("{:0{}}(lost)\t".format(ts, g_max_ts_digits), file = rec_file)
         else:
             _g_lost_pkt_ts_arr.append(ts)
         return
-    if len(_g_lost_pkt_ts_arr) > 0:
-        if(len(_g_lost_pkt_ts_arr) > 1):
-            print("{:0{}} ~ {:0{}}(lost)\t".format(_g_lost_pkt_ts_arr[0], g_max_ts_digits, 
-                                           _g_lost_pkt_ts_arr[-1],g_max_ts_digits), file = rec_file)
-        else:
-            print("{:0{}}(lost)\t".format(_g_lost_pkt_ts_arr[0], g_max_ts_digits), file = rec_file)
-        _g_lost_pkt_ts_arr.clear()
+
+    flush_lost_ts_arr()
+
     first_pkt_no = node['data'][0]['number']
     first_pkt_sniff_time_str = node['first_sniff_time'].strftime("%Y%m%d-%H:%M:%S.%f")
     pkt_ts = ts
@@ -336,7 +357,8 @@ def refresh_stat():
         capt_idx = 0
         display_curr_idx = g_dg_ring_link['ctrl_blk']['ts_in_capt_ord'][capt_idx]
         display_end_idx = round_sub(display_curr_idx, 1)
-        idx_flag_marks = dict([(i, i) for i in range(g_dg_ring_link['capacity'])])
+        cared_idx_list = gen_round_range(start_idx, end_idx, g_dg_ring_link['capacity'])
+        idx_flag_marks = dict([(i, i) for i in cared_idx_list])
     else:
         display_curr_idx = start_idx
         display_end_idx = end_idx
@@ -392,15 +414,17 @@ def refresh_stat():
             if capt_idx >= len(g_dg_ring_link['ctrl_blk']['ts_in_capt_ord']):
                 #all pkts in pcapng and neighbouring lost pkt are processed. process the remaings.
                 for rem_idx in idx_flag_marks.keys():
-                    if in_round_range(rem_idx, start_idx, end_idx, g_dg_ring_link['capacity'], True, True):
-                        g_statistics_dict['lost_pkt'] += 1
-                        g_statistics_dict['total_pkt'] += 1
-                        rec_pkt_data(rem_idx, None, 0, "", g_pkt_rec_file)
+                    g_statistics_dict['lost_pkt'] += 1
+                    g_statistics_dict['total_pkt'] += 1
+                    rec_pkt_data(rem_idx, None, 0, "", g_pkt_rec_file)
+                rec_pkt_data(rec_file = g_pkt_rec_file, flush_lost_pkts = True)
                 break
             else:
                 display_curr_idx = g_dg_ring_link['ctrl_blk']['ts_in_capt_ord'][capt_idx]
         else:
-            if display_end_idx == display_curr_idx: break
+            if display_end_idx == display_curr_idx: 
+                rec_pkt_data(rec_file = g_pkt_rec_file, flush_lost_pkts = True)
+                break
             display_curr_idx = round_add(display_curr_idx, 1)
 
     g_dg_ring_link['ctrl_blk']['ts_in_capt_ord'].clear()

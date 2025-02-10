@@ -156,6 +156,15 @@ def round_add(s, cnt,  round_len = _g_round_len):
     """
     return (s + cnt) % round_len
 
+def gen_round_range(s, e, round_len = _g_round_len, s_inc = True, e_inc = True):
+    a_s = s if s_inc else round_add(s, 1, round_len)
+    a_e = e if e_inc else round_sub(e, 1, round_len)
+    if a_s <= a_e:
+        r_list = list(range(a_s, a_e + 1))
+    else:
+        r_list = list(range(a_s, round_len)) + list(range(0, a_e + 1))
+    return r_list
+
 def insert_node_into_ring_link(handler, node, mode = 'skip'):
     """
     Input:
